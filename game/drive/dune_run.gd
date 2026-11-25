@@ -38,8 +38,18 @@ func _ready() -> void:
 	# windward faces catch the sun, the steep lee faces fall into shade
 	sun.rotation = Vector3(deg_to_rad(-46.0), deg_to_rad(-102.0), 0.0)
 	env.fog_depth_curve = 2.2
+	if OS.get_cmdline_user_args().has("sunset"):
+		_sunset()
 	sea = DuneSea.new()
 	add_child(sea)
+	if OS.get_cmdline_user_args().has("sunset"):
+		# the Journey sheen terms blow out with the sun this low: calm them
+		var sm := (sea.get_node("DuneMesh") as MeshInstance3D).material_override as ShaderMaterial
+		for k in ["ocean_strength", "sheen_strength", "sky_sheen_strength", "rim_strength"]:
+			sm.set_shader_parameter(k, 0.0)
+		sm.set_shader_parameter("glitter_strength", 3.0)
+		sm.set_shader_parameter("sand_color", Color(0.86, 0.56, 0.4))
+		sm.set_shader_parameter("shadow_color", Color(0.48, 0.36, 0.5))
 	flat = Sebkha.new()
 	add_child(flat)
 	add_child(SandInteraction.new())
@@ -74,6 +84,15 @@ func _ready() -> void:
 	else:
 		car.autopilot = Callable()
 	car.landed.connect(func(v: float) -> void: _shake = maxf(_shake, clampf(v * 0.02, 0.0, 0.35)))
+	if OS.get_cmdline_user_args().has("sunset"):
+		for sx in [-0.55, 0.55]:
+			var hl := SpotLight3D.new()
+			hl.light_color = Color(1.0, 0.9, 0.7)
+			hl.light_energy = 6.0
+			hl.spot_range = 40.0
+			hl.spot_angle = 28.0
+			hl.position = Vector3(sx, 0.6, -2.0)
+			car.add_child(hl)
 	add_child(cam)
 	cam.fov = 55.0
 	cam.far = 1600.0
@@ -220,3 +239,21 @@ func _camera(delta: float) -> void:
 	var floor_y := sea.height(_cam_pos.x, _cam_pos.z) + 0.8
 	cam.global_position = Vector3(_cam_pos.x, maxf(_cam_pos.y, floor_y), _cam_pos.z) + jitter
 	cam.look_at(_cam_look, Vector3.UP)
+
+
+## Golden-hour variant: the sun just above the dunes ahead of the run,
+## long blue shadows, an orange haze, headlights on.
+func _sunset() -> void:
+	sun.rotation = Vector3(deg_to_rad(-9.0), deg_to_rad(95.0), 0.0)
+	sun.light_color = Color(1.0, 0.62, 0.36)
+	sun.light_energy = 0.42
+	var sky := env.sky.sky_material as ProceduralSkyMaterial
+	sky.sky_top_color = Color(0.36, 0.42, 0.62)
+	sky.sky_horizon_color = Color(1.0, 0.6, 0.38)
+	sky.ground_horizon_color = Color(0.96, 0.56, 0.36)
+	sky.sun_angle_max = 40.0
+	env.ambient_light_color = Color(0.55, 0.45, 0.62)
+	env.ambient_light_energy = 0.45
+	env.fog_light_color = Color(0.78, 0.46, 0.4)
+	env.fog_sun_scatter = 0.05
+	env.fog_density = 0.35
