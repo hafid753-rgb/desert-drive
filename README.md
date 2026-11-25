@@ -8,6 +8,9 @@ wind, dust, light and lens flare.
   stick steer and accelerate; Space is the handbrake.
 - **Teaser:** `godot --path . res://game/drive/drive_test.tscn -- teaser`
   runs drifts, the oasis pond, then getting stuck in soft sand.
+- **Dune run:** `godot --path . res://game/drive/dune_run.tscn [-- teaser]`. A 1.3 km
+  dune sea, crest jumps, a flooded sebkha (salt flat), crate walls and a
+  shed that breaks apart (rigid-body physics). Video: `media/desert_drive_dune_run.mp4`.
 - **The car** is an original voxel 1980s sedan built in code
   (`game/drive/voxel_car.gd`), with no brand marks.
 - **The handling** is in `game/drive/desert_car.gd`; see `game/drive/README.md`.

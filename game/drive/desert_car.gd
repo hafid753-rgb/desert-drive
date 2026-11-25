@@ -12,6 +12,7 @@ extends Node3D
 ## `velocity` is exposed for those systems.
 
 signal stuck_changed(stuck: bool)
+signal landed(impact: float)
 
 var velocity := Vector3.ZERO
 var yaw := 0.0
@@ -21,6 +22,21 @@ var steer := 0.0
 var handbrake := false
 var autopilot: Callable          # returns [throttle, steer, handbrake] (teaser)
 var oasis: Oasis
+## Optional water test (e.g. a sebkha): Callable(Vector3) -> bool
+var water_fn: Callable
+## Tuning per scene (the dune run is faster and dustier)
+var max_speed := 22.0
+var engine := 12.0
+var dust_scale := 1.0
+## a big rising dust plume behind the car (the dune run)
+var plume := false
+var _plume: CPUParticles3D
+## water: engine share kept and extra drag (deep pond vs sheet water)
+var water_power := 0.45
+var water_drag := 1.1
+var airborne := false
+var vy := 0.0
+var pusher: AnimatableBody3D
 ## Soft-sand pits: [centre (Vector3), radius]
 var soft_pits: Array = []
 var stuck := false
@@ -42,13 +58,11 @@ var _roost: CPUParticles3D
 var _ripple_cd := 0.0
 var _stuck_t := 0.0
 
-const ENGINE := 12.0
 const REVERSE := 6.0
 const DRAG := 0.28
 const GRIP := 3.4
 const GRIP_HANDBRAKE := 0.5
 const TURN := 2.3
-const MAX_SPEED := 22.0
 
 
 func _ready() -> void:
@@ -74,14 +88,24 @@ func _ready() -> void:
 		wheels.append(pivot)
 		_prev_wheel_world.append(Vector3.ZERO)
 		if i >= 2:
-			_dust.append(_make_dust(Color(0.98, 0.78, 0.64), Color(0.88, 0.62, 0.5), 60, 0.55))
+			var dd := _make_dust(Color(0.98, 0.78, 0.64), Color(0.88, 0.62, 0.5), int(60 * dust_scale * dust_scale), 0.55 * dust_scale)
+			dd.lifetime = 1.6 * dust_scale
+			_dust.append(dd)
 		i += 1
-	_spray = _make_dust(Color(0.93, 0.95, 0.9), Color(0.55, 0.72, 0.72), 90, 0.22)
+	_spray = _make_dust(Color(0.93, 0.95, 0.9), Color(0.55, 0.72, 0.72), int(90 * dust_scale), 0.22 * sqrt(dust_scale))
 	_spray.gravity = Vector3(0, -6.0, 0)
 	_spray.initial_velocity_min = 2.5
 	_spray.initial_velocity_max = 5.0
 	_spray.spread = 55.0
 	_spray.lifetime = 0.9
+	if plume:
+		_plume = _make_dust(Color(1.0, 0.92, 0.84), Color(0.92, 0.74, 0.64), 420, 2.6)
+		_plume.lifetime = 4.5
+		_plume.gravity = Vector3(0, 0.35, 0)
+		_plume.initial_velocity_min = 0.5
+		_plume.initial_velocity_max = 2.5
+		_plume.spread = 60.0
+		_plume.emission_sphere_radius = 0.9
 	_roost = _make_dust(Color(0.95, 0.72, 0.56), Color(0.8, 0.55, 0.42), 120, 0.4)
 	_roost.gravity = Vector3(0, -4.0, 0)
 	_roost.initial_velocity_min = 3.0
@@ -89,6 +113,18 @@ func _ready() -> void:
 	_roost.spread = 22.0
 	_roost.lifetime = 1.3
 	yaw = rotation.y
+	# pushes crates and shed planks (rigid bodies on mask 4)
+	pusher = AnimatableBody3D.new()
+	pusher.sync_to_physics = true
+	pusher.collision_layer = 4
+	pusher.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(1.8, 1.1, 4.4)
+	cs.shape = box
+	cs.position = Vector3(0, 0.75, 0)
+	pusher.add_child(cs)
+	add_child(pusher)
 
 
 func _make_dust(lit: Color, shade: Color, amount: int, size: float) -> CPUParticles3D:
@@ -144,7 +180,7 @@ func _read_input() -> void:
 func _physics_process(delta: float) -> void:
 	_read_input()
 	var pos := global_position
-	in_water = oasis != null and oasis.is_water(pos)
+	in_water = (oasis != null and oasis.is_water(pos)) or (water_fn.is_valid() and water_fn.call(pos))
 	on_soft = false
 	for pit in soft_pits:
 		if Vector2(pos.x - pit[0].x, pos.z - pit[0].z).length() < pit[1]:
@@ -153,12 +189,12 @@ func _physics_process(delta: float) -> void:
 	var right := Vector3(cos(yaw), 0, -sin(yaw))
 	var vl := velocity.dot(fwd)
 	var vt := velocity.dot(right)
-	var power := ENGINE
+	var power := engine
 	var drag := DRAG
 	var grip := GRIP_HANDBRAKE if handbrake else GRIP
 	if in_water:
-		power *= 0.45
-		drag += 1.1
+		power *= water_power
+		drag += water_drag
 		grip = maxf(grip, 2.0)
 	if on_soft:
 		# the wheels dig instead of driving: power goes into spin
@@ -171,7 +207,9 @@ func _physics_process(delta: float) -> void:
 		drag += 0.35
 	vl += push * delta
 	vl -= vl * drag * delta
-	vl = clampf(vl, -8.0, MAX_SPEED)
+	if airborne:
+		push = 0.0
+	vl = clampf(vl, -8.0, max_speed)
 	vt *= exp(-grip * delta)
 	# steering: needs speed, reverses in reverse; handbrake swings the tail
 	var speed_k := clampf(absf(vl) / 6.0, 0.0, 1.0) * signf(vl if absf(vl) > 0.1 else 1.0)
@@ -196,19 +234,34 @@ func _physics_process(delta: float) -> void:
 	var rgt := (hits[1] + hits[3]) * 0.5
 	var wb := absf(VoxelCar.wheel_positions()[0].z - VoxelCar.wheel_positions()[2].z)
 	var tr := absf(VoxelCar.wheel_positions()[0].x * 2.0)
-	var k := 1.0 - exp(-12.0 * delta)
-	_ground_y = lerpf(_ground_y, gy, k)
-	# stuck: sink into the soft sand while the wheels spin
+	# vertical: follow the ground while it supports the car; when a crest
+	# drops away faster than gravity, the car flies (and lands with a thump)
 	if on_soft and absf(throttle) > 0.2:
 		sink = minf(sink + delta * 0.09, 0.26)
-	pos.y = _ground_y - sink
+	var ground := gy - sink
+	vy -= 22.0 * delta
+	var y := global_position.y + vy * delta
+	if y <= ground:
+		if airborne:
+			landed.emit(absf(vy))
+		airborne = false
+		vy = clampf((ground - global_position.y) / maxf(delta, 0.001), -30.0, 30.0)
+		y = ground
+	else:
+		airborne = y > ground + 0.12
+	pos.y = y
 	# body attitude: slope + weight transfer (squat, nose dive, lean out of turns)
 	var slope_pitch := atan2(front - rear, wb)
 	var slope_roll := atan2(rgt - left, tr)
 	var accel_pitch := clampf(-push * 0.006, -0.06, 0.06)
 	var lean := clampf(vt * 0.025 + yaw_rate * vl * 0.004, -0.12, 0.12)
-	_pitch = lerpf(_pitch, slope_pitch + accel_pitch, 1.0 - exp(-8.0 * delta))
-	_roll = lerpf(_roll, slope_roll - lean, 1.0 - exp(-8.0 * delta))
+	if airborne:
+		# in the air: the nose drops slowly, no weight transfer
+		_pitch = lerpf(_pitch, -0.12, 1.0 - exp(-1.2 * delta))
+		_roll = lerpf(_roll, 0.0, 1.0 - exp(-2.0 * delta))
+	else:
+		_pitch = lerpf(_pitch, slope_pitch + accel_pitch, 1.0 - exp(-10.0 * delta))
+		_roll = lerpf(_roll, slope_roll - lean, 1.0 - exp(-8.0 * delta))
 	global_position = pos
 	rotation = Vector3(_pitch, yaw, _roll)
 	if on_soft and absf(throttle) > 0.2 and Vector2(velocity.x, velocity.z).length() < 1.2:
@@ -248,7 +301,7 @@ func _wheels_and_fx(delta: float, vl: float, vt: float) -> void:
 	for i in wheels.size():
 		var wp := wheels[i].global_position
 		wp.y = global_position.y
-		if sfx and not in_water and _prev_wheel_world[i] != Vector3.ZERO and _prev_wheel_world[i].distance_to(wp) > 0.05:
+		if sfx and not in_water and not airborne and _prev_wheel_world[i] != Vector3.ZERO and _prev_wheel_world[i].distance_to(wp) > 0.05:
 			sfx.groove(_prev_wheel_world[i], wp, 0.24, 1.0 if not on_soft else 1.0)
 		_prev_wheel_world[i] = wp
 	# dust behind the rear wheels: speed + slide
@@ -256,13 +309,20 @@ func _wheels_and_fx(delta: float, vl: float, vt: float) -> void:
 		var d := _dust[j]
 		var w := wheels[2 + j].global_position
 		d.global_position = Vector3(w.x, global_position.y + 0.12, w.z)
-		d.emitting = not in_water and (speed > 3.0 or slip > 1.5 or spinning)
+		d.emitting = not in_water and not airborne and (speed > 3.0 or slip > 1.5 or spinning)
 		d.speed_scale = clampf(0.6 + (speed + slip * 2.0) / 16.0, 0.6, 1.6)
 		var back := -Vector3(-sin(yaw), 0, -cos(yaw))
 		d.direction = (back + Vector3(0, 0.7, 0) + Vector3(cos(yaw), 0, -sin(yaw)) * signf(vt) * 0.6).normalized()
+	if _plume:
+		_plume.global_position = global_position - Vector3(-sin(yaw), 0, -cos(yaw)) * 2.4 + Vector3(0, 0.5, 0)
+		_plume.emitting = not in_water and not airborne and speed > 8.0
+		_plume.direction = Vector3(0, 1, 0)
 	# water: spray from the wheels + rings on the pond
 	_spray.emitting = in_water and speed > 1.0
 	_spray.global_position = global_position + Vector3(0, 0.15, 0)
+	_spray.direction = (-Vector3(-sin(yaw), 0, -cos(yaw)) * 0.6 + Vector3(0, 1.0, 0)).normalized()
+	_spray.initial_velocity_max = 5.0 + speed * 0.35
+	_spray.spread = 70.0
 	_spray.speed_scale = clampf(speed / 8.0, 0.5, 1.6)
 	if in_water and oasis:
 		_ripple_cd -= delta
