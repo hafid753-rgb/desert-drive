@@ -1,0 +1,9 @@
+# Normalize text
+* text=auto eol=lf
+
+# Binary art, videos and APKs are stored as plain git blobs (the session proxy blocks Git LFS uploads)
+*.png binary
+*.mp4 binary
+*.apk binary
+*.glb binary
+*.blend binary

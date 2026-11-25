@@ -1,0 +1,100 @@
+; Engine configuration file.
+; Hafid — "The Room" combat prototype. Pinned to Godot 4.6.3-stable.
+
+config_version=5
+
+[application]
+
+config/name="Desert Drive"
+config/description="Combat feel prototype: the Cat vs one shadow jinn, touch controls."
+run/main_scene="res://game/drive/drive_test.tscn"
+config/features=PackedStringArray("4.6", "Mobile")
+config/icon="res://icon.svg"
+
+[autoload]
+
+GameInput="*res://game/autoload/game_input.gd"
+PerfLogger="*res://game/autoload/perf_logger.gd"
+Juice="*res://game/autoload/juice.gd"
+Settings="*res://game/autoload/settings.gd"
+WorldState="*res://game/autoload/world_state.gd"
+Wind="*res://game/autoload/wind.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=4
+
+[input_devices]
+
+pointing/emulate_mouse_from_touch=false
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+common/physics_ticks_per_second=60
+common/physics_interpolation=true
+
+[rendering]
+
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"
+textures/vram_compression/import_etc2_astc=true
+lights_and_shadows/directional_shadow/size=2048
+lights_and_shadows/directional_shadow/size.mobile=1024
+
+[shader_globals]
+
+sand_mask={
+"type": "sampler2D",
+"value": ""
+}
+sand_mask_rect={
+"type": "vec4",
+"value": Vector4(0, 0, 16, 0)
+}
+sand_mask_now={
+"type": "float",
+"value": 0.0
+}
+
+soil_zone={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+wind_dir={
+"type": "vec2",
+"value": Vector2(0.92, 0.38)
+}
+wind_strength={
+"type": "float",
+"value": 0.35
+}
+wind_gust={
+"type": "float",
+"value": 0.55
+}
+wind_gust_freq={
+"type": "float",
+"value": 0.13
+}
+wind_wavelength={
+"type": "float",
+"value": 14.0
+}
+wind_turbulence={
+"type": "float",
+"value": 0.3
+}
+wind_time={
+"type": "float",
+"value": 0.0
+}
+player_pos={
+"type": "vec3",
+"value": Vector3(0, -100, 0)
+}
